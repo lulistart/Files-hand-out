@@ -1,18 +1,5 @@
 import type { Metadata } from "next";
-import { IBM_Plex_Mono, Noto_Sans_SC } from "next/font/google";
 import "./globals.css";
-
-const bodyFont = Noto_Sans_SC({
-  variable: "--font-body",
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
-});
-
-const monoFont = IBM_Plex_Mono({
-  variable: "--font-mono",
-  subsets: ["latin"],
-  weight: ["400", "500"],
-});
 
 export const metadata: Metadata = {
   title: "文件兑换分发系统",
@@ -25,7 +12,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN" className={`${bodyFont.variable} ${monoFont.variable} h-full`}>
+    <html lang="zh-CN" className="h-full">
       <body className="min-h-full antialiased">{children}</body>
     </html>
   );

@@ -38,7 +38,7 @@ body {
     radial-gradient(circle at top left, rgba(15, 106, 98, 0.12), transparent 28%),
     radial-gradient(circle at top right, rgba(47, 94, 156, 0.1), transparent 24%),
     linear-gradient(180deg, #f7f4ed 0%, #eef3f8 100%);
-  font-family: var(--font-body), "Segoe UI", sans-serif;
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 a {
