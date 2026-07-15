@@ -1,0 +1,22 @@
+# Local / VPS Docker deployment for the file redemption distributor.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: files-hand-out
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+      DATABASE_URL: file:/app/data/distribute.db
+    volumes:
+      - distribute_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  distribute_data:

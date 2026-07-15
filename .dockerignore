@@ -1,0 +1,33 @@
+# Git / docs / local tooling
+.git
+.agents
+*.md
+!README.md
+
+# Dependencies and build output
+node_modules
+.next
+.npm-cache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Local env and secrets
+.env
+.env.*
+!.env.example
+
+# Local runtime data / logs
+data
+*.db
+*.db-*
+cookies.txt
+dev-err.log
+dev-out.log
+dev.pid
+npm-install-libsql.log
+tsconfig.tsbuildinfo
+
+# Screenshots are only for README, not needed in image
+image
