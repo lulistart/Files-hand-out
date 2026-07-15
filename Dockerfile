@@ -26,6 +26,7 @@ ENV ADMIN_USERNAME=admin
 ENV ADMIN_PASSWORD=build-placeholder
 ENV ADMIN_SESSION_SECRET=build-session-secret
 ENV DATABASE_URL=file:/tmp/build-distribute.db
+ENV DISTRIBUTE_BUILD_SKIP_DB=1
 RUN npm run build
 
 FROM base AS runner

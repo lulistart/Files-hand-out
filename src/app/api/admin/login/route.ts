@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth";
 import { rateLimit, tooManyRequests } from "@/lib/rate-limit";
 import { getClientIp } from "@/lib/utils";
+export const dynamic = "force-dynamic";
 
 const loginSchema = z.object({
   username: z.string().min(1).max(64),

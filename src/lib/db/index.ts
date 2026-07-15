@@ -1,8 +1,11 @@
 import { createClient, type Client } from "@libsql/client";
-import { drizzle } from "drizzle-orm/libsql";
+import { drizzle, type LibSQLDatabase } from "drizzle-orm/libsql";
 import fs from "node:fs";
 import path from "node:path";
 import * as schema from "./schema";
+
+type AppSchema = typeof schema;
+type AppDb = LibSQLDatabase<AppSchema>;
 
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS batches (
@@ -71,12 +74,40 @@ CREATE INDEX IF NOT EXISTS idx_codes_status ON redemption_codes(status);
 CREATE INDEX IF NOT EXISTS idx_events_created_at ON download_events(created_at);
 `;
 
+type DbBoot = {
+  client: Client;
+  db: AppDb;
+  mode: "local" | "libsql";
+  schemaReady: boolean;
+  schemaPromise: Promise<void> | null;
+};
+
+const globalForDb = globalThis as unknown as {
+  __distributeDbBoot?: DbBoot;
+};
+
 function defaultLocalDbPath() {
   return path.join(process.cwd(), "data", "distribute.db");
 }
 
+function isBuildPhase() {
+  return (
+    process.env.DISTRIBUTE_BUILD_SKIP_DB === "1" ||
+    process.env.NEXT_PHASE === "phase-production-build" ||
+    process.env.npm_lifecycle_event === "build"
+  );
+}
+
 function resolveDatabaseUrl() {
-  return (process.env.DATABASE_URL || `file:${defaultLocalDbPath()}`).trim();
+  const fromEnv = (process.env.DATABASE_URL || "").trim();
+
+  // next build collects page data in parallel workers; never share one sqlite file there.
+  if (isBuildPhase()) {
+    return `file:/tmp/distribute-build-${process.pid}-${process.env.NEXT_PRIVATE_WORKER_INDEX || "0"}.db`;
+  }
+
+  if (fromEnv) return fromEnv;
+  return `file:${defaultLocalDbPath()}`;
 }
 
 function isRemoteLibsql(url: string) {
@@ -152,16 +183,62 @@ function createClientFromEnv(): { client: Client; mode: "local" | "libsql" } {
   };
 }
 
-const boot = createClientFromEnv();
-await ensureSchema(boot.client);
+function getBoot(): DbBoot {
+  if (!globalForDb.__distributeDbBoot) {
+    const created = createClientFromEnv();
+    globalForDb.__distributeDbBoot = {
+      client: created.client,
+      mode: created.mode,
+      db: drizzle(created.client, { schema }),
+      schemaReady: false,
+      schemaPromise: null,
+    };
+  }
+  return globalForDb.__distributeDbBoot;
+}
 
-export const dbMode = boot.mode;
-export const db = drizzle(boot.client, { schema });
+async function ensureSchemaOnce() {
+  const boot = getBoot();
+  if (boot.schemaReady) return;
+
+  // Skip schema writes during image build to avoid SQLITE_BUSY across workers.
+  if (isBuildPhase()) {
+    boot.schemaReady = true;
+    return;
+  }
+
+  if (!boot.schemaPromise) {
+    boot.schemaPromise = ensureSchema(boot.client)
+      .then(() => {
+        boot.schemaReady = true;
+      })
+      .catch((error) => {
+        boot.schemaPromise = null;
+        throw error;
+      });
+  }
+
+  await boot.schemaPromise;
+}
+
+export function getDbMode() {
+  return getBoot().mode;
+}
+
+// Lazy proxy so importing this module during next build does not open SQLite immediately.
+export const db = new Proxy({} as AppDb, {
+  get(_target, property, receiver) {
+    const real = getBoot().db as unknown as object;
+    const value = Reflect.get(real, property, receiver);
+    return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(real) : value;
+  },
+});
 
 export async function ensureDbReady() {
+  await ensureSchemaOnce();
   return db;
 }
 
 export async function initDatabase() {
-  return db;
+  return ensureDbReady();
 }

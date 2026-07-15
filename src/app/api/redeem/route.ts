@@ -1,11 +1,12 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { db } from "@/lib/db";
+import { db, ensureDbReady } from "@/lib/db";
 import { downloadEvents, files, redemptionCodes } from "@/lib/db/schema";
 import { createDownloadUrl, isR2Configured } from "@/lib/r2";
 import { rateLimit, tooManyRequests } from "@/lib/rate-limit";
 import { formatCode, generateId, getClientIp, normalizeCode, nowMs } from "@/lib/utils";
+export const dynamic = "force-dynamic";
 
 export const runtime = "nodejs";
 
@@ -14,6 +15,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  await ensureDbReady();
   const ip = getClientIp(request);
   const ua = request.headers.get("user-agent") || "";
   const limited = rateLimit(`redeem:${ip}`, 20, 60_000);

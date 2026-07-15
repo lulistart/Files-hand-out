@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { db, ensureDbReady } from "@/lib/db";
 import { appSettings } from "@/lib/db/schema";
 import { nowMs } from "@/lib/utils";
 
@@ -66,6 +66,10 @@ export function invalidateSettingsCache() {
 }
 
 export async function getStoredSettings(force = false): Promise<StoredSettings> {
+  if (process.env.NEXT_PHASE === "phase-production-build" || process.env.npm_lifecycle_event === "build") {
+    return { ...DEFAULTS };
+  }
+  await ensureDbReady();
   const cache = globalForSettings.__distributeSettingsCache;
   if (!force && cache && Date.now() - cache.loadedAt < CACHE_TTL_MS) {
     return cache.value;
@@ -81,6 +85,7 @@ export async function getStoredSettings(force = false): Promise<StoredSettings> 
 }
 
 export async function saveStoredSettings(next: StoredSettings) {
+  await ensureDbReady();
   const now = nowMs();
   const payload = JSON.stringify(next);
   const rows = await db.select().from(appSettings).where(eq(appSettings.id, "default"));

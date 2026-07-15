@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { requireAdmin, unauthorized } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, ensureDbReady } from "@/lib/db";
 import { batches, files, redemptionCodes } from "@/lib/db/schema";
 import { buildObjectKey, isR2Configured, putObjectBuffer } from "@/lib/r2";
 import { formatCode, generateId, generateRedemptionCode, nowMs } from "@/lib/utils";
+export const dynamic = "force-dynamic";
 
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  await ensureDbReady();
   const session = await requireAdmin();
   if (!session) return unauthorized();
 

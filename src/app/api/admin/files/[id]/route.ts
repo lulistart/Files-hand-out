@@ -1,14 +1,16 @@
 import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { requireAdmin, unauthorized } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { db, ensureDbReady } from "@/lib/db";
 import { files, redemptionCodes } from "@/lib/db/schema";
 import { deleteObject, isR2Configured } from "@/lib/r2";
 import { nowMs } from "@/lib/utils";
+export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ id: string }> };
 
 export async function DELETE(_request: Request, { params }: Params) {
+  await ensureDbReady();
   const session = await requireAdmin();
   if (!session) return unauthorized();
 
@@ -34,6 +36,7 @@ export async function DELETE(_request: Request, { params }: Params) {
 }
 
 export async function PATCH(request: Request, { params }: Params) {
+  await ensureDbReady();
   const session = await requireAdmin();
   if (!session) return unauthorized();
 

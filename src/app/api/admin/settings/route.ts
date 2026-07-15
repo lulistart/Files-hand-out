@@ -11,6 +11,7 @@ import {
 } from "@/lib/auth";
 import { getR2Status } from "@/lib/r2";
 import { getStoredSettings, maskSecret, saveStoredSettings } from "@/lib/settings";
+export const dynamic = "force-dynamic";
 
 const settingsSchema = z.object({
   adminUsername: z.string().min(1).max(64).optional(),
