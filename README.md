@@ -175,3 +175,5 @@ docker run --rm -p 3000:3000 --env-file .env -v distribute_data:/app/data files-
 | 下载链接有效期 | 600 秒 |
 | 单文件大小上限 | 500 MB |
 | 存储 | Cloudflare R2 私有桶 + 预签名下载 |
+
+![学AI上inux.do](https://linux.do/)
