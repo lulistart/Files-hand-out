@@ -29,6 +29,10 @@ export async function POST(request: Request) {
 
   const batchName = String(form.get("batchName") || "").trim();
   const batchNote = String(form.get("batchNote") || "").trim();
+  const rawMaxUses = Number(form.get("maxUses") ?? 1);
+  const maxUses = Number.isFinite(rawMaxUses)
+    ? Math.min(9999, Math.max(1, Math.floor(rawMaxUses)))
+    : 1;
   if (!batchName) {
     return NextResponse.json({ error: "Batch name is required" }, { status: 400 });
   }
@@ -119,7 +123,7 @@ export async function POST(request: Request) {
         fileId,
         batchId,
         status: "unused",
-        maxUses: 1,
+        maxUses,
         usedCount: 0,
         expiresAt: null,
         boundUser: null,

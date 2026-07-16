@@ -364,14 +364,14 @@ table.data th {
 }
 
 .modal-table-wrap table.data {
-  min-width: 980px;
+  min-width: 1100px;
 }
 
 .row-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
-  min-width: 240px;
+  min-width: 320px;
 }
 
 @media (max-width: 720px) {
