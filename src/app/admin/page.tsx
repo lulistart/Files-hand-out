@@ -102,6 +102,7 @@ export default function AdminPage() {
   const [query, setQuery] = useState("");
   const [batchName, setBatchName] = useState("");
   const [batchNote, setBatchNote] = useState("");
+  const [maxUsesPerCode, setMaxUsesPerCode] = useState(1);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -279,6 +280,7 @@ export default function AdminPage() {
       const form = new FormData();
       form.append("batchName", batchName.trim());
       if (batchNote.trim()) form.append("batchNote", batchNote.trim());
+      form.append("maxUses", String(Math.min(9999, Math.max(1, Math.floor(maxUsesPerCode) || 1))));
       for (const file of selectedFiles) {
         form.append("files", file);
       }
@@ -346,7 +348,7 @@ export default function AdminPage() {
 
   async function handleRowAction(
     item: BatchDetailItem,
-    action: "copy" | "reset" | "revoke" | "delete",
+    action: "copy" | "reset" | "revoke" | "delete" | "set_max_uses" | "reset_uses",
   ) {
     if (action === "copy") {
       if (!item.code?.code) {
@@ -369,8 +371,36 @@ export default function AdminPage() {
     }
 
     if (action === "reset") {
-      const ok = window.confirm(`确认重置「${item.originalName}」的兑换码？旧码将失效。`);
+      const ok = window.confirm(
+        `确认重新生成「${item.originalName}」的兑换码？旧码将失效，使用次数会清零，可用次数上限保持不变。`,
+      );
       if (!ok) return;
+    }
+
+    if (action === "reset_uses") {
+      const ok = window.confirm(
+        `确认将「${item.originalName}」的已用次数清零？兑换码本身不变。当前 ${item.code?.usedCount ?? 0}/${item.code?.maxUses ?? 1}。`,
+      );
+      if (!ok) return;
+    }
+
+    let nextMaxUses: number | undefined;
+    if (action === "set_max_uses") {
+      if (!item.code) {
+        setError("该文件暂无兑换码");
+        return;
+      }
+      const input = window.prompt(
+        `设置「${item.originalName}」兑换码可用次数（1–9999）\n当前：已用 ${item.code.usedCount} / 上限 ${item.code.maxUses}`,
+        String(item.code.maxUses),
+      );
+      if (input === null) return;
+      const n = Math.floor(Number(String(input).trim()));
+      if (!Number.isFinite(n) || n < 1 || n > 9999) {
+        setError("可用次数须为 1–9999 的整数");
+        return;
+      }
+      nextMaxUses = n;
     }
 
     setRowBusyId(item.id);
@@ -386,27 +416,55 @@ export default function AdminPage() {
         if (!res.ok) throw new Error(data.error || "删除失败");
         setCopyTip(`已删除 ${item.originalName}`);
       } else {
+        const bodyAction =
+          action === "revoke"
+            ? "revoke"
+            : action === "set_max_uses"
+              ? "set_max_uses"
+              : action === "reset_uses"
+                ? "reset_uses"
+                : "regenerate";
         const res = await fetch(`/api/admin/files/${item.id}/code`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ action: action === "revoke" ? "revoke" : "regenerate" }),
+          body: JSON.stringify(
+            action === "set_max_uses"
+              ? { action: bodyAction, maxUses: nextMaxUses }
+              : { action: bodyAction },
+          ),
         });
         const data = await res.json().catch(() => ({}));
         if (res.status === 401) {
           router.replace("/admin/login");
           return;
         }
-        if (!res.ok) throw new Error(data.error || (action === "revoke" ? "作废失败" : "重置失败"));
-        setCopyTip(
-          action === "revoke"
-            ? `已作废 ${item.originalName} 的兑换码`
-            : `已重置 ${item.originalName} 的兑换码：${data.code || ""}`,
-        );
-        if (action === "reset" && data.code) {
-          try {
-            await navigator.clipboard.writeText(String(data.code));
-          } catch {
-            // ignore clipboard failure after regenerate
+        if (!res.ok) {
+          const fallback =
+            action === "revoke"
+              ? "作废失败"
+              : action === "set_max_uses"
+                ? "设置次数失败"
+                : action === "reset_uses"
+                  ? "重置次数失败"
+                  : "重置码失败";
+          throw new Error(data.error || fallback);
+        }
+        if (action === "revoke") {
+          setCopyTip(`已作废 ${item.originalName} 的兑换码`);
+        } else if (action === "set_max_uses") {
+          setCopyTip(
+            `已设置 ${item.originalName} 可用次数为 ${data.maxUses ?? nextMaxUses}（已用 ${data.usedCount ?? item.code?.usedCount ?? 0}）`,
+          );
+        } else if (action === "reset_uses") {
+          setCopyTip(`已清零 ${item.originalName} 的使用次数，码仍为 ${data.code || item.code?.code || ""}`);
+        } else {
+          setCopyTip(`已重新生成 ${item.originalName} 的兑换码：${data.code || ""}`);
+          if (data.code) {
+            try {
+              await navigator.clipboard.writeText(String(data.code));
+            } catch {
+              // ignore clipboard failure after regenerate
+            }
           }
         }
       }
@@ -580,6 +638,31 @@ export default function AdminPage() {
               maxLength={200}
             />
           </label>
+        </div>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-[220px_1fr]">
+          <label className="block space-y-1.5">
+            <span className="text-sm font-medium">每个兑换码可用次数</span>
+            <input
+              className="field"
+              type="number"
+              min={1}
+              max={9999}
+              step={1}
+              value={maxUsesPerCode}
+              onChange={(e) => {
+                const n = Math.floor(Number(e.target.value));
+                if (!Number.isFinite(n)) {
+                  setMaxUsesPerCode(1);
+                  return;
+                }
+                setMaxUsesPerCode(Math.min(9999, Math.max(1, n)));
+              }}
+            />
+          </label>
+          <p className="self-end text-sm text-[var(--muted)] pb-2">
+            默认 1 次（一次性）。设为更大值后，同一兑换码可兑换多次，直到用尽。
+          </p>
         </div>
 
         <div
@@ -1159,8 +1242,25 @@ export default function AdminPage() {
                             </button>
                             <button
                               className="btn btn-secondary btn-sm"
+                              disabled={busyRow || !item.code}
+                              onClick={() => void handleRowAction(item, "set_max_uses")}
+                              title="修改可用次数上限"
+                            >
+                              设次数
+                            </button>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              disabled={busyRow || !item.code || (item.code.usedCount ?? 0) === 0}
+                              onClick={() => void handleRowAction(item, "reset_uses")}
+                              title="清零已用次数，码不变"
+                            >
+                              清次数
+                            </button>
+                            <button
+                              className="btn btn-secondary btn-sm"
                               disabled={busyRow}
                               onClick={() => void handleRowAction(item, "reset")}
+                              title="重新生成兑换码"
                             >
                               重置码
                             </button>
