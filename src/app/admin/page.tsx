@@ -42,6 +42,14 @@ type LastResult = {
   pairs: string[];
 };
 
+type ConfirmDialogState = {
+  title: string;
+  description: string;
+  confirmLabel?: string;
+  tone?: "danger" | "default";
+  onConfirm: () => void | Promise<void>;
+};
+
 type SettingsData = {
   admin: {
     username: string;
@@ -116,6 +124,9 @@ export default function AdminPage() {
   const [activeItems, setActiveItems] = useState<BatchDetailItem[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
   const [rowBusyId, setRowBusyId] = useState<string | null>(null);
+  const [batchBusyId, setBatchBusyId] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
   const [copyTip, setCopyTip] = useState("");
   const [showSelectedPreview, setShowSelectedPreview] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -168,11 +179,13 @@ export default function AdminPage() {
   }, [loadBatches]);
 
   useEffect(() => {
-    if (!detailOpen && !settingsOpen) return;
+    if (!detailOpen && !settingsOpen && !confirmDialog) return;
 
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
-        if (settingsOpen) setSettingsOpen(false);
+        if (confirmBusy) return;
+        if (confirmDialog) setConfirmDialog(null);
+        else if (settingsOpen) setSettingsOpen(false);
         else setDetailOpen(false);
       }
     }
@@ -184,7 +197,7 @@ export default function AdminPage() {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [detailOpen, settingsOpen]);
+  }, [detailOpen, settingsOpen, confirmDialog, confirmBusy]);
 
   function addFiles(fileList: FileList | File[]) {
     const incoming = Array.from(fileList);
@@ -258,6 +271,67 @@ export default function AdminPage() {
   async function refreshActiveBatch() {
     if (!activeBatchId) return;
     await Promise.all([openBatch(activeBatchId, { openModal: false }), loadBatches(query)]);
+  }
+
+  async function runConfirmAction() {
+    if (!confirmDialog || confirmBusy) return;
+    setConfirmBusy(true);
+    setError("");
+    try {
+      await confirmDialog.onConfirm();
+      setConfirmDialog(null);
+    } catch {
+      // keep dialog open on failure so user can retry/cancel
+    } finally {
+      setConfirmBusy(false);
+    }
+  }
+
+  function requestDeleteBatch(batch: { id: string; name: string; fileCount?: number }) {
+    const fileCount = typeof batch.fileCount === "number" ? batch.fileCount : activeItems.length;
+    setConfirmDialog({
+      title: "删除分发任务",
+      description: `确认删除任务「${batch.name}」？将一并删除关联的 ${fileCount} 个文件、兑换码，以及 R2 中的对象。此操作不可恢复。`,
+      confirmLabel: "确认删除",
+      tone: "danger",
+      onConfirm: () => executeDeleteBatch(batch, fileCount),
+    });
+  }
+
+  async function executeDeleteBatch(
+    batch: { id: string; name: string },
+    fileCount: number,
+  ) {
+    setBatchBusyId(batch.id);
+    setError("");
+    try {
+      const res = await fetch(`/api/admin/batches/${batch.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) {
+        router.replace("/admin/login");
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || "删除任务失败");
+
+      if (activeBatchId === batch.id) {
+        setDetailOpen(false);
+        setActiveBatchId(null);
+        setActiveBatchName("");
+        setActiveBatchNote(null);
+        setActiveCodes([]);
+        setActivePairs([]);
+        setActiveItems([]);
+      }
+      setLastResult((prev) => (prev?.batchId === batch.id ? null : prev));
+      setCopyTip(`已删除任务「${batch.name}」及其 ${data.deletedFiles ?? fileCount} 个文件`);
+      setTimeout(() => setCopyTip(""), 2200);
+      await loadBatches(query);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "删除任务失败");
+      throw err;
+    } finally {
+      setBatchBusyId(null);
+    }
   }
 
   async function startUpload() {
@@ -344,6 +418,48 @@ export default function AdminPage() {
     }
   }
 
+  function requestRowAction(
+    item: BatchDetailItem,
+    action: "copy" | "reset" | "revoke" | "delete",
+  ) {
+    if (action === "copy") {
+      void handleRowAction(item, action);
+      return;
+    }
+
+    if (action === "delete") {
+      setConfirmDialog({
+        title: "删除文件",
+        description: `确认删除文件「${item.originalName}」？将同步删除兑换码及 R2 对象，此操作不可恢复。`,
+        confirmLabel: "确认删除",
+        tone: "danger",
+        onConfirm: () => handleRowAction(item, "delete"),
+      });
+      return;
+    }
+
+    if (action === "revoke") {
+      setConfirmDialog({
+        title: "作废兑换码",
+        description: `确认作废「${item.originalName}」的兑换码？作废后用户将无法再兑换下载。`,
+        confirmLabel: "确认作废",
+        tone: "danger",
+        onConfirm: () => handleRowAction(item, "revoke"),
+      });
+      return;
+    }
+
+    if (action === "reset") {
+      setConfirmDialog({
+        title: "重置兑换码",
+        description: `确认重置「${item.originalName}」的兑换码？旧码将立即失效。`,
+        confirmLabel: "确认重置",
+        tone: "default",
+        onConfirm: () => handleRowAction(item, "reset"),
+      });
+    }
+  }
+
   async function handleRowAction(
     item: BatchDetailItem,
     action: "copy" | "reset" | "revoke" | "delete",
@@ -356,21 +472,6 @@ export default function AdminPage() {
       }
       await copyText(item.code.code, `已复制 ${item.originalName} 的兑换码`);
       return;
-    }
-
-    if (action === "delete") {
-      const ok = window.confirm(`确认删除文件「${item.originalName}」？此操作不可恢复。`);
-      if (!ok) return;
-    }
-
-    if (action === "revoke") {
-      const ok = window.confirm(`确认作废「${item.originalName}」的兑换码？`);
-      if (!ok) return;
-    }
-
-    if (action === "reset") {
-      const ok = window.confirm(`确认重置「${item.originalName}」的兑换码？旧码将失效。`);
-      if (!ok) return;
     }
 
     setRowBusyId(item.id);
@@ -415,6 +516,7 @@ export default function AdminPage() {
       await refreshActiveBatch();
     } catch (err) {
       setError(err instanceof Error ? err.message : "操作失败");
+      throw err;
     } finally {
       setRowBusyId(null);
     }
@@ -802,6 +904,7 @@ export default function AdminPage() {
                   <div className="batch-actions">
                     <button
                       className="btn btn-primary btn-sm"
+                      disabled={batchBusyId === batch.id}
                       onClick={() => void openBatch(batch.id)}
                     >
                       打开
@@ -818,6 +921,19 @@ export default function AdminPage() {
                     >
                       CSV
                     </a>
+                    <button
+                      className="btn btn-danger btn-sm"
+                      disabled={batchBusyId === batch.id}
+                      onClick={() =>
+                        void requestDeleteBatch({
+                          id: batch.id,
+                          name: batch.name,
+                          fileCount: batch.fileCount,
+                        })
+                      }
+                    >
+                      {batchBusyId === batch.id ? "删除中..." : "删除"}
+                    </button>
                   </div>
                 </div>
               );
@@ -1051,9 +1167,25 @@ export default function AdminPage() {
                   {activeBatchNote ? ` · ${activeBatchNote}` : ""}
                 </p>
               </div>
-              <button className="btn btn-secondary btn-sm" onClick={closeBatchDetail}>
-                关闭
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  className="btn btn-danger btn-sm"
+                  disabled={!activeBatchId || batchBusyId === activeBatchId || detailLoading}
+                  onClick={() => {
+                    if (!activeBatchId) return;
+                    void requestDeleteBatch({
+                      id: activeBatchId,
+                      name: activeBatchName,
+                      fileCount: activeItems.length,
+                    });
+                  }}
+                >
+                  {batchBusyId === activeBatchId ? "删除中..." : "删除任务"}
+                </button>
+                <button className="btn btn-secondary btn-sm" onClick={closeBatchDetail}>
+                  关闭
+                </button>
+              </div>
             </div>
 
             <div className="modal-toolbar">
@@ -1153,28 +1285,28 @@ export default function AdminPage() {
                             <button
                               className="btn btn-secondary btn-sm"
                               disabled={busyRow || !item.code?.code}
-                              onClick={() => void handleRowAction(item, "copy")}
+                              onClick={() => void requestRowAction(item, "copy")}
                             >
                               复制码
                             </button>
                             <button
                               className="btn btn-secondary btn-sm"
                               disabled={busyRow}
-                              onClick={() => void handleRowAction(item, "reset")}
+                              onClick={() => void requestRowAction(item, "reset")}
                             >
                               重置码
                             </button>
                             <button
                               className="btn btn-secondary btn-sm"
                               disabled={busyRow || !item.code || item.code.status === "revoked"}
-                              onClick={() => void handleRowAction(item, "revoke")}
+                              onClick={() => void requestRowAction(item, "revoke")}
                             >
                               作废
                             </button>
                             <button
                               className="btn btn-danger btn-sm"
                               disabled={busyRow}
-                              onClick={() => void handleRowAction(item, "delete")}
+                              onClick={() => void requestRowAction(item, "delete")}
                             >
                               删除
                             </button>
@@ -1199,6 +1331,49 @@ export default function AdminPage() {
                   ) : null}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmDialog ? (
+        <div
+          className="modal-overlay confirm-overlay"
+          onClick={() => {
+            if (!confirmBusy) setConfirmDialog(null);
+          }}
+        >
+          <div
+            className="modal-panel confirm-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="confirm-icon-wrap" aria-hidden="true">
+              <span className={`confirm-icon ${confirmDialog.tone === "danger" ? "danger" : "default"}`}>
+                !
+              </span>
+            </div>
+            <h2 id="confirm-dialog-title" className="confirm-title">
+              {confirmDialog.title}
+            </h2>
+            <p className="confirm-desc">{confirmDialog.description}</p>
+            <div className="confirm-actions">
+              <button
+                className="btn btn-secondary"
+                disabled={confirmBusy}
+                onClick={() => setConfirmDialog(null)}
+              >
+                取消
+              </button>
+              <button
+                className={`btn ${confirmDialog.tone === "danger" ? "btn-danger" : "btn-primary"}`}
+                disabled={confirmBusy}
+                onClick={() => void runConfirmAction()}
+              >
+                {confirmBusy ? "处理中..." : confirmDialog.confirmLabel || "确认"}
+              </button>
             </div>
           </div>
         </div>
